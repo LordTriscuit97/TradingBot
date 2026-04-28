@@ -2,87 +2,71 @@ import json
 import os
 
 
-class SubPortfolio:
-    """Représente un compte unique pour une stratégie spécifique."""
+class Portfolio:
+    def __init__(self, save_file: str = "portfolio_state.json"):
+        self.save_file = save_file
 
-    def __init__(self, nom, cash_initial):
-        self.nom = nom
-        self.cash = float(cash_initial)
-        self.actions = {}  # ex: {'AAPL': 10, 'MSFT': 5}
-        self.valeur_historique = []  # Pour tracer la courbe à la fin
+        self.cash = 0.0
+        self.positions = {}
 
-    def acheter(self, symbol, prix, quantite):
-        cout = prix * quantite
-        if cout <= self.cash:
-            self.cash -= cout
-            if symbol in self.actions:
-                self.actions[symbol] += quantite
-            else:
-                self.actions[symbol] = quantite
-            return True
-        return False
+        self._initialiser_compte()
 
-    def vendre(self, symbol, prix, quantite):
-        if symbol in self.actions and self.actions[symbol] >= quantite:
-            gain = prix * quantite
-            self.cash += gain
-            self.actions[symbol] -= quantite
-            # Nettoyage si quantité nulle
-            if self.actions[symbol] <= 0:
-                del self.actions[symbol]
-            return True
-        return False
-
-    def get_valeur_totale(self, prix_actuels):
-        """
-        Calcule la valeur totale (Cash + Actions)
-        :param prix_actuels: Dictionnaire { 'AAPL': 150.0, 'MSFT': 250.0 }
-        """
-        valeur_actions = 0
-        for symbol, qte in self.actions.items():
-            # Si on a le prix du jour, on valorise, sinon on ignore (prudence)
-            if symbol in prix_actuels:
-                valeur_actions += qte * prix_actuels[symbol]
-        return self.cash + valeur_actions
-
-
-class MasterPortfolio:
-    """Le Gestionnaire qui supervise les 4 stratégies."""
-
-    def __init__(self, cash_par_strategie=10000.0):
-        # On crée les 4 comptes séparés
-        self.comptes = {
-            "Kalman": SubPortfolio("Kalman", cash_par_strategie),
-            "Z-Score": SubPortfolio("Z-Score", cash_par_strategie),
-            "Breakout": SubPortfolio("Breakout", cash_par_strategie),
-            "Benchmark_SP500": SubPortfolio("Buy & Hold", cash_par_strategie)
-        }
-        self.fichier_sauvegarde = "master_portfolio.json"
-
-    def sauvegarder(self):
-        # On transforme tout en format JSON compatible
-        donnees_globales = {}
-        for nom, compte in self.comptes.items():
-            donnees_globales[nom] = {
-                "cash": compte.cash,
-                "actions": compte.actions,
-                "historique": compte.valeur_historique
-            }
-
-        with open(self.fichier_sauvegarde, 'w') as f:
-            json.dump(donnees_globales, f)
-        print("💾 État des 4 portefeuilles sauvegardé.")
-
-    def charger(self):
-        if os.path.exists(self.fichier_sauvegarde):
-            with open(self.fichier_sauvegarde, 'r') as f:
-                donnees = json.load(f)
-
-            for nom, data in donnees.items():
-                if nom in self.comptes:
-                    self.comptes[nom].cash = data["cash"]
-                    self.comptes[nom].actions = data["actions"]
-                    self.comptes[nom].valeur_historique = data.get("historique", [])
-            print("📂 Mémoire rechargée pour les 4 stratégies.")
+    def _initialiser_compte(self):
+        if os.path.exists(self.save_file):
+            with open(self.save_file, 'r') as file:
+                try:
+                    data = json.load(file)
+                    self.cash = data.get("cash", 0.0)
+                    self.positions = data.get("positions", {})
+                    print(f"Portefeuille chargé : {self.cash:.2f}$ en cash, {len(self.positions)} positions.")
+                except json.JSONDecodeError:
+                    print("⚠Fichier corrompu. Réinitialisation des fonds.")
+                    self._creer_nouveau_compte()
         else:
-            print("⚠️ Aucune sauvegarde. Démarrage à neuf.")
+            self._creer_nouveau_compte()
+
+    def _creer_nouveau_compte(self):
+        self.cash = 10000.0
+        self.positions = {}
+        print(f"Nouveau compte créé. Montant initial verrouillé à {self.cash:.2f}$.")
+        self.save_state()
+
+    def buy(self, ticker: str, price: float, quantity: float) -> bool:
+        cost = price * quantity
+        if self.cash >= cost:
+            self.cash -= cost
+            self.positions[ticker] = self.positions.get(ticker, 0.0) + quantity
+            self.save_state()
+            return True
+
+        print(f"Fonds insuffisants pour acheter {quantity} parts de {ticker}.")
+        return False
+
+    def sell(self, ticker: str, price: float, quantity: float) -> bool:
+        if ticker in self.positions and self.positions[ticker] >= quantity:
+            self.cash += price * quantity
+            self.positions[ticker] -= quantity
+
+            if self.positions[ticker] < 0.0001:
+                del self.positions[ticker]
+
+            self.save_state()
+            return True
+
+        print(f"Impossible de vendre {quantity} parts de {ticker}.")
+        return False
+
+    def get_total_value(self, current_prices: dict) -> float:
+        total_value = self.cash
+        for ticker, qty in self.positions.items():
+            if ticker in current_prices:
+                total_value += qty * current_prices[ticker]
+        return total_value
+
+    def save_state(self):
+        data_to_save = {
+            "cash": self.cash,
+            "positions": self.positions
+        }
+        with open(self.save_file, 'w') as file:
+            json.dump(data_to_save, file, indent=4)
